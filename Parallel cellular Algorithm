@@ -1,0 +1,128 @@
+import random
+import math
+from multiprocessing import Pool
+
+# ============================
+# Objective Function
+# ============================
+def sphere_function(position):
+    """Objective function: minimize sum of squares."""
+    return sum(x ** 2 for x in position)
+
+
+# ============================
+# Helper Functions
+# ============================
+def random_position(dim, lower, upper):
+    """Generate a random position in the search space."""
+    return [random.uniform(lower, upper) for _ in range(dim)]
+
+
+def get_neighbors(index, grid_size):
+    """Get neighboring cell indices (Moore neighborhood)."""
+    rows, cols = grid_size
+    i, j = index
+    neighbors = []
+    for di in [-1, 0, 1]:
+        for dj in [-1, 0, 1]:
+            if di == 0 and dj == 0:
+                continue
+            ni, nj = i + di, j + dj
+            if 0 <= ni < rows and 0 <= nj < cols:
+                neighbors.append((ni, nj))
+    return neighbors
+
+
+def update_rule(current_pos, best_neighbor_pos, alpha=0.5):
+    """Update rule combining current and best neighbor position."""
+    new_pos = []
+    for c, b in zip(current_pos, best_neighbor_pos):
+        # small random perturbation for exploration
+        noise = random.uniform(-0.1, 0.1)
+        new_pos.append(c + alpha * (b - c) + noise)
+    return new_pos
+
+
+# ============================
+# Cell Update (Parallelizable)
+# ============================
+def evaluate_and_update(args):
+    """Update and evaluate a single cell."""
+    i, j, grid, f, grid_shape = args
+    cell = grid[i][j]
+    neighbors_idx = get_neighbors((i, j), grid_shape)
+    neighbors = [grid[x][y] for (x, y) in neighbors_idx]
+
+    # Find best neighbor (minimization)
+    best_neighbor = min(neighbors, key=lambda n: n['fitness'])
+
+    new_position = update_rule(cell['position'], best_neighbor['position'])
+    new_fitness = f(new_position)
+
+    if new_fitness < cell['fitness']:
+        return {'position': new_position, 'fitness': new_fitness}
+    else:
+        return cell
+
+
+# ============================
+# Main PCA Function
+# ============================
+def parallel_cellular_algorithm(f, grid_size=(6, 6), dim=3, bounds=(-5, 5), max_iter=50):
+    """Parallel Cellular Algorithm implementation."""
+    rows, cols = grid_size
+    lower, upper = bounds
+
+    # Step 1: Initialization
+    grid = [[{'position': random_position(dim, lower, upper), 'fitness': None}
+             for _ in range(cols)] for _ in range(rows)]
+
+    # Evaluate initial fitness
+    for i in range(rows):
+        for j in range(cols):
+            grid[i][j]['fitness'] = f(grid[i][j]['position'])
+
+    # Initial best
+    best_solution = min([grid[i][j] for i in range(rows) for j in range(cols)],
+                        key=lambda c: c['fitness'])
+    print("Initial Best Fitness:", round(best_solution['fitness'], 6))
+
+    # Step 2: Main Loop
+    for iteration in range(max_iter):
+        with Pool() as pool:
+            args = [(i, j, grid, f, grid_size) for i in range(rows) for j in range(cols)]
+            updated_cells = pool.map(evaluate_and_update, args)
+
+        # Update grid with new values
+        for idx, cell in enumerate(updated_cells):
+            i, j = divmod(idx, cols)
+            grid[i][j] = cell
+
+        # Update global best
+        current_best = min([grid[i][j] for i in range(rows) for j in range(cols)],
+                           key=lambda c: c['fitness'])
+
+        if current_best['fitness'] < best_solution['fitness']:
+            best_solution = current_best
+
+        if iteration % 10 == 0 or iteration == max_iter - 1:
+            print(f"Iteration {iteration+1}/{max_iter} | Best Fitness: {round(best_solution['fitness'], 6)}")
+
+    return best_solution
+
+
+# ============================
+# Run PCA
+# ============================
+if __name__ == "__main__":
+    best = parallel_cellular_algorithm(
+        f=sphere_function,
+        grid_size=(5, 5),
+        dim=3,
+        bounds=(-5, 5),
+        max_iter=40
+    )
+
+    print("\n=== Final Result ===")
+    print("Best Position:", [round(x, 4) for x in best['position']])
+    print("Best Fitness:", round(best['fitness'], 6))
